@@ -1,126 +1,24 @@
 """
-HTML and Text File Processor
-Author: Piotr Proszowski
+Main Application Window
+Defines the UI components and application logic
 """
 
-from PIL import Image, UnidentifiedImageError
 import os
-import sys
-from bs4 import BeautifulSoup, Comment
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                            QHBoxLayout, QPushButton, QLabel, QLineEdit, 
-                            QProgressBar, QCheckBox, QFileDialog, QMessageBox,
-                            QComboBox, QListWidget, QListWidgetItem, QGridLayout,
-                            QGroupBox, QScrollArea, QTabWidget, QRadioButton)
-from PyQt5.QtCore import Qt, QMimeData
-from PyQt5.QtGui import QDragEnterEvent, QDropEvent
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+                            QPushButton, QLabel, QProgressBar, QCheckBox, 
+                            QFileDialog, QMessageBox, QComboBox, QListWidget, 
+                            QGroupBox, QTabWidget, QRadioButton, QGridLayout)
+from PyQt5.QtCore import Qt, QApplication
 
-def process_html_file(input_path, output_path, tags_to_remove, remove_with_content, clean_attrs_mode, attrs_exceptions=None):
-    """
-    Process HTML file by modifying specified tags using BeautifulSoup.
-    
-    Args:
-        input_path: Path to the input file
-        output_path: Path where processed file will be saved
-        tags_to_remove: List of tags to remove
-        remove_with_content: If True, removes tags with their content, otherwise preserves content
-        clean_attrs_mode: Mode for cleaning attributes - 'all', 'selected', or 'all_except'
-        attrs_exceptions: List of tags to exclude or include for attribute cleaning (depends on clean_attrs_mode)
-    """
-    try:
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        
-        with open(input_path, 'r', encoding='utf-8') as file:
-            content = file.read()
-        
-        # Parse the HTML content
-        soup = BeautifulSoup(content, 'html.parser')
-        
-        # Remove comments if specified
-        if 'comment' in tags_to_remove:
-            for comment in soup.find_all(text=lambda text: isinstance(text, Comment)):
-                comment.extract()
-        
-        # Process tags to remove
-        for tag in tags_to_remove:
-            if tag and tag != 'comment':  # Skip empty tag names and 'comment'
-                for element in soup.find_all(tag):
-                    if remove_with_content:
-                        # Remove tag and its content
-                        element.decompose()
-                    else:
-                        # Remove tag but keep its content
-                        element.unwrap()
-        
-        # Process tags for attribute cleaning based on mode
-        if clean_attrs_mode == 'all':
-            # Clean all tags
-            for element in soup.find_all(True):  # Find all elements
-                # Remove all attributes
-                element.attrs = {}
-                    
-        elif clean_attrs_mode == 'selected':
-            # Clean only selected tags
-            for tag in attrs_exceptions or []:
-                if tag:  # Skip empty tag names
-                    for element in soup.find_all(tag):
-                        # Remove all attributes
-                        element.attrs = {}
-                            
-        elif clean_attrs_mode == 'all_except':
-            # Clean all tags except those in tags_to_exclude
-            for element in soup.find_all(True):
-                if element.name not in (attrs_exceptions or []):
-                    # Remove all attributes
-                    element.attrs = {}
-        
-        # Convert back to string and write to output file
-        with open(output_path, 'w', encoding='utf-8') as file:
-            file.write(str(soup))
-            
-        return True
-    except Exception as e:
-        return str(e)
-
-def is_supported_file(filename, extensions):
-    """Check if a file has one of the supported extensions."""
-    return os.path.splitext(filename)[1].lower() in extensions
-
-class DragDropLineEdit(QLineEdit):
-    """Custom QLineEdit that accepts drag and drop of files and folders."""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAcceptDrops(True)
-        self.paths = []
-        
-    def dragEnterEvent(self, event: QDragEnterEvent):
-        """Handle drag enter events for the line edit."""
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        
-    def dropEvent(self, event: QDropEvent):
-        """Handle drop events for the line edit."""
-        self.paths = []
-        paths_text = []
-        
-        for url in event.mimeData().urls():
-            path = url.toLocalFile()
-            self.paths.append(path)
-            paths_text.append(path)
-            
-        self.setText("; ".join(paths_text))
-        event.acceptProposedAction()
-
-    def get_paths(self):
-        """Return the list of dropped paths."""
-        return self.paths
+from gui.drag_drop import DragDropLineEdit
+from processors.html_processor import process_html_file
+from utils.file_utils import get_all_files
 
 class FileProcessorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("HTML & Text File Processor")
-        self.setGeometry(100, 100, 800, 700)  # Optymalna wysokość dla zakładek
+        self.setGeometry(100, 100, 800, 700)
         
         # Add author info label
         self.author_label = QLabel("© 2024 Piotr Proszowski")
@@ -132,6 +30,15 @@ class FileProcessorWindow(QMainWindow):
         self.is_dark_mode = app.palette().window().color().lightness() < 128
         
         # Set theme-dependent styles
+        self._setup_styles()
+        
+        # Create UI components
+        self._create_ui()
+        
+        self.adjustSize()  # Dostosuj rozmiar okna do zawartości
+
+    def _setup_styles(self):
+        """Set up application styles based on theme."""
         if self.is_dark_mode:
             self.setStyleSheet("""
                 QMainWindow {
@@ -153,76 +60,61 @@ class FileProcessorWindow(QMainWindow):
                     border: 1px solid #333;
                     border-radius: 4px;
                     background-color: #2d2d2d;
-                    color: #ffffff;
+                    color: #ddd;
                 }
-                QLineEdit:focus {
-                    border: 1px solid #4CAF50;
-                    background-color: #363636;
+                QCheckBox, QRadioButton, QLabel {
+                    color: #ddd;
+                }
+                QGroupBox {
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    margin-top: 1em;
+                    padding-top: 10px;
+                    color: #ddd;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 3px 0 3px;
+                }
+                QListWidget {
+                    background-color: #2d2d2d;
+                    border: 1px solid #333;
+                    color: #ddd;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #444;
+                    background-color: #1e1e1e;
+                }
+                QTabBar::tab {
+                    background-color: #333;
+                    color: #ddd;
+                    padding: 8px 12px;
+                    margin-right: 2px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #4CAF50;
+                }
+                QComboBox {
+                    background-color: #2d2d2d;
+                    color: #ddd;
+                    padding: 5px;
+                    border: 1px solid #333;
+                    border-radius: 4px;
                 }
                 QProgressBar {
                     border: 1px solid #333;
                     border-radius: 4px;
                     text-align: center;
                     background-color: #2d2d2d;
-                    color: #ffffff;
                 }
                 QProgressBar::chunk {
                     background-color: #4CAF50;
-                    border-radius: 3px;
-                }
-                QLabel {
-                    color: #ffffff;
-                }
-                QCheckBox {
-                    color: #ffffff;
-                }
-                QCheckBox::indicator {
-                    width: 18px;
-                    height: 18px;
-                    background-color: #2d2d2d;
-                    border: 1px solid #333;
-                }
-                QCheckBox::indicator:checked {
-                    background-color: #4CAF50;
-                    border-radius: 2px;
-                }
-                QListWidget {
-                    background-color: #2d2d2d;
-                    color: #ffffff;
-                    border: 1px solid #333;
-                    border-radius: 4px;
-                }
-                QGroupBox {
-                    color: #ffffff;
-                    border: 1px solid #333;
-                    border-radius: 4px;
-                    margin-top: 1ex;
-                    padding-top: 1ex;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    padding: 0 5px;
-                }
-                QComboBox {
-                    padding: 6px;
-                    border: 1px solid #333;
-                    border-radius: 4px;
-                    background-color: #2d2d2d;
-                    color: #ffffff;
-                }
-                QComboBox::drop-down {
-                    subcontrol-origin: padding;
-                    subcontrol-position: top right;
-                    width: 15px;
-                    border-left-width: 1px;
-                    border-left-color: #333;
+                    width: 1px;
                 }
             """)
         else:
             self.setStyleSheet("""
-                QMainWindow {
-                    background-color: #ffffff;
-                }
                 QPushButton {
                     background-color: #4CAF50;
                     color: white;
@@ -238,80 +130,85 @@ class FileProcessorWindow(QMainWindow):
                     padding: 8px;
                     border: 1px solid #ddd;
                     border-radius: 4px;
-                    background-color: #fafafa;
                 }
-                QLineEdit:focus {
-                    border: 1px solid #4CAF50;
-                    background-color: white;
+                QGroupBox {
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    margin-top: 1em;
+                    padding-top: 10px;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 3px 0 3px;
+                }
+                QListWidget {
+                    border: 1px solid #ddd;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #ddd;
+                }
+                QTabBar::tab {
+                    background-color: #eee;
+                    padding: 8px 12px;
+                    margin-right: 2px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #4CAF50;
+                    color: white;
                 }
                 QProgressBar {
                     border: 1px solid #ddd;
                     border-radius: 4px;
                     text-align: center;
-                    background-color: #fafafa;
                 }
                 QProgressBar::chunk {
                     background-color: #4CAF50;
-                    border-radius: 3px;
-                }
-                QLabel {
-                    color: #333333;
-                }
-                QCheckBox {
-                    color: #333333;
-                }
-                QCheckBox::indicator {
-                    width: 18px;
-                    height: 18px;
-                }
-                QCheckBox::indicator:checked {
-                    background-color: #4CAF50;
-                    border-radius: 2px;
-                }
-                QListWidget {
-                    background-color: #fafafa;
-                    border: 1px solid #ddd;
-                    border-radius: 4px;
-                }
-                QGroupBox {
-                    border: 1px solid #ddd;
-                    border-radius: 4px;
-                    margin-top: 1ex;
-                    padding-top: 1ex;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    padding: 0 5px;
-                }
-                QComboBox {
-                    padding: 6px;
-                    border: 1px solid #ddd;
-                    border-radius: 4px;
-                    background-color: #fafafa;
-                }
-                QComboBox::drop-down {
-                    subcontrol-origin: padding;
-                    subcontrol-position: top right;
-                    width: 15px;
-                    border-left-width: 1px;
-                    border-left-color: #ddd;
+                    width: 1px;
                 }
             """)
 
+    def _create_ui(self):
+        """Create the user interface components."""
         # Utwórz główny widget
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         main_layout = QVBoxLayout(main_widget)
         
         # File/Folder selection with drag and drop support
+        self._create_input_section(main_layout)
+        
+        # Create tab widget for tag operations
+        self.tabWidget = QTabWidget()
+        main_layout.addWidget(self.tabWidget)
+        
+        # Create tabs for tag removal and attribute cleaning
+        self._create_tag_removal_tab()
+        self._create_attribute_cleaning_tab()
+        
+        # Progress bar
+        self._create_progress_section(main_layout)
+        
+        # Start button
+        start_button = QPushButton("Start Processing")
+        start_button.clicked.connect(self.start_processing)
+        main_layout.addWidget(start_button)
+        
+        # Add author label at the bottom
+        main_layout.addWidget(self.author_label)
+
+    def _create_input_section(self, main_layout):
+        """Create the input files/folders selection section."""
         input_group = QGroupBox("Input Files and Folders")
         input_layout = QVBoxLayout(input_group)
         
+        # Path input with drag and drop
         path_layout = QHBoxLayout()
         self.path_input = DragDropLineEdit()
-        self.path_input.setPlaceholderText("Drag & drop files/folders here or click Browse...")
+        self.path_input.setPlaceholderText("Drag and drop files/folders here or use Browse button...")
         browse_button = QPushButton("Browse")
         browse_button.clicked.connect(self.browse_paths)
+        
         path_layout.addWidget(self.path_input)
         path_layout.addWidget(browse_button)
         input_layout.addLayout(path_layout)
@@ -319,29 +216,24 @@ class FileProcessorWindow(QMainWindow):
         # File type selection
         file_type_layout = QHBoxLayout()
         file_type_layout.addWidget(QLabel("Process files with extension:"))
-        
         self.html_checkbox = QCheckBox("HTML (.html)")
         self.html_checkbox.setChecked(True)
-        file_type_layout.addWidget(self.html_checkbox)
-        
         self.txt_checkbox = QCheckBox("Text (.txt)")
+        
+        file_type_layout.addWidget(self.html_checkbox)
         file_type_layout.addWidget(self.txt_checkbox)
+        file_type_layout.addStretch()
         
         input_layout.addLayout(file_type_layout)
-        main_layout.addWidget(input_group)
-
+        
         # Add recursive option
         self.recursive_checkbox = QCheckBox("Process subfolders recursively")
-        self.recursive_checkbox.setChecked(True)
         input_layout.addWidget(self.recursive_checkbox)
-
+        
         main_layout.addWidget(input_group)
-        
-        # Utwórz widget z zakładkami
-        self.tabWidget = QTabWidget()
-        main_layout.addWidget(self.tabWidget)
-        
-        # === PIERWSZA ZAKŁADKA: Tags to Remove ===
+
+    def _create_tag_removal_tab(self):
+        """Create the tab for tag removal options."""
         remove_tab = QWidget()
         remove_layout = QVBoxLayout(remove_tab)
         
@@ -402,8 +294,9 @@ class FileProcessorWindow(QMainWindow):
         remove_layout.addWidget(remove_tag_button)
         
         self.tabWidget.addTab(remove_tab, "Tags to Remove")
-        
-        # === DRUGA ZAKŁADKA: Tags to Clean Attributes ===
+
+    def _create_attribute_cleaning_tab(self):
+        """Create the tab for attribute cleaning options."""
         clean_tab = QWidget()
         clean_layout = QVBoxLayout(clean_tab)
         
@@ -478,8 +371,9 @@ class FileProcessorWindow(QMainWindow):
         clean_layout.addWidget(self.tag_selection_group)
         
         self.tabWidget.addTab(clean_tab, "Tags to Clean Attributes")
-        
-        # Progress bar
+
+    def _create_progress_section(self, main_layout):
+        """Create the progress bar section."""
         progress_group = QGroupBox("Progress")
         progress_layout = QVBoxLayout(progress_group)
         
@@ -489,17 +383,8 @@ class FileProcessorWindow(QMainWindow):
         progress_layout.addWidget(self.status_label)
         
         main_layout.addWidget(progress_group)
-        
-        # Start button
-        start_button = QPushButton("Start Processing")
-        start_button.clicked.connect(self.start_processing)
-        main_layout.addWidget(start_button)
-        
-        # Add author label at the bottom
-        main_layout.addWidget(self.author_label)
 
-        self.adjustSize()  # Dostosuj rozmiar okna do zawartości
-
+    # Event handlers and utility methods
     def browse_paths(self):
         """Browse for files or folders."""
         dialog = QFileDialog(self)
@@ -510,9 +395,11 @@ class FileProcessorWindow(QMainWindow):
             self.path_input.paths = paths
 
     def show_error(self, message):
+        """Show an error message dialog."""
         QMessageBox.critical(self, "Error", message)
 
     def show_info(self, message):
+        """Show an information message dialog."""
         QMessageBox.information(self, "Information", message)
 
     def add_removal_tag(self):
@@ -572,8 +459,48 @@ class FileProcessorWindow(QMainWindow):
         for item in selected_items:
             list_widget.takeItem(list_widget.row(item))
 
-    def get_all_files(self, paths, recursive=False):
-        """Get all supported files from the given paths."""
+    def toggle_tag_selection(self, checked):
+        """Enable or disable tag selection based on selected mode."""
+        if checked:
+            # Enable tag selection only for 'selected' and 'all_except' modes
+            self.tag_selection_group.setEnabled(
+                self.attr_mode_selected.isChecked() or self.attr_mode_all_except.isChecked()
+            )
+            
+            # Update label based on selected mode
+            if self.attr_mode_selected.isChecked():
+                self.tag_selection_group.setTitle("Tags TO Clean (select tags)")
+            elif self.attr_mode_all_except.isChecked():
+                self.tag_selection_group.setTitle("Tags to EXCLUDE from Cleaning (select tags to keep)")
+    
+    def get_selected_tags(self):
+        """Get list of selected tags from checkboxes and list."""
+        selected_tags = []
+        
+        # Get tags from checkboxes
+        for tag, checkbox in self.tag_selection_checkboxes.items():
+            if checkbox.isChecked():
+                selected_tags.append(tag)
+        
+        # Get custom tags from list
+        for i in range(self.clean_tags_list.count()):
+            tag = self.clean_tags_list.item(i).text()
+            if tag and tag not in selected_tags:
+                selected_tags.append(tag)
+                
+        return selected_tags
+
+    def start_processing(self):
+        """Start processing the selected files."""
+        # Validate input
+        paths = self.path_input.get_paths()
+        if not paths:
+            self.show_error("Please select at least one file or folder")
+            return
+
+        recursive = self.recursive_checkbox.isChecked()
+        
+        # Get supported file extensions
         supported_extensions = set()
         if self.html_checkbox.isChecked():
             supported_extensions.add('.html')
@@ -581,42 +508,8 @@ class FileProcessorWindow(QMainWindow):
             supported_extensions.add('.txt')
             
         if not supported_extensions:
-            return []
-            
-        files = []
-        
-        for path in paths:
-            if os.path.isfile(path):
-                if is_supported_file(path, supported_extensions):
-                    # For single file, use the filename as relative path
-                    filename = os.path.basename(path)
-                    files.append((path, filename))
-            elif os.path.isdir(path):
-                if recursive:
-                    # Walk through all directories and subdirectories
-                    for root, _, filenames in os.walk(path):
-                        for filename in filenames:
-                            if is_supported_file(filename, supported_extensions):
-                                full_path = os.path.join(root, filename)
-                                rel_path = os.path.relpath(full_path, path)
-                                files.append((full_path, os.path.join(os.path.basename(path), rel_path)))
-                else:
-                    # Just process the files in the top directory
-                    for filename in os.listdir(path):
-                        full_path = os.path.join(path, filename)
-                        if os.path.isfile(full_path) and is_supported_file(filename, supported_extensions):
-                            files.append((full_path, os.path.join(os.path.basename(path), filename)))
-                    
-        return files
-
-    def start_processing(self):
-        """Start processing the selected files."""
-        paths = self.path_input.get_paths()
-        if not paths:
-            self.show_error("Please select at least one file or folder")
+            self.show_error("Please select at least one file type to process")
             return
-
-        recursive = self.recursive_checkbox.isChecked()
         
         # Get tags to remove and clean
         tags_to_remove = []
@@ -641,10 +534,28 @@ class FileProcessorWindow(QMainWindow):
             attr_clean_mode = 'all_except'
             attr_exceptions = self.get_selected_tags()
         
-        # Validate selections...
+        # Validate selections based on current tab
+        current_tab_index = self.tabWidget.currentIndex()
+        
+        if current_tab_index == 0 and not tags_to_remove:
+            # On tag removal tab and no tags selected
+            self.show_error("Please select at least one tag to remove")
+            return
+        elif current_tab_index == 1:
+            # On attribute cleaning tab
+            if attr_clean_mode == 'all':
+                # In "Clean all tags" mode, no need to select tags
+                pass
+            elif not attr_exceptions:
+                # In "selected" or "all_except" modes, we need selected tags
+                if attr_clean_mode == 'selected':
+                    self.show_error("Please select at least one tag to clean attributes from")
+                else:  # attr_clean_mode == 'all_except'
+                    self.show_error("Please select at least one tag to exclude from cleaning")
+                return
         
         # Get all files to process
-        files = self.get_all_files(paths, recursive)
+        files = get_all_files(paths, recursive, supported_extensions)
         
         total_files = len(files)
         
@@ -656,6 +567,7 @@ class FileProcessorWindow(QMainWindow):
         output_dir = os.path.join(os.path.dirname(paths[0]), "processed")
         os.makedirs(output_dir, exist_ok=True)
 
+        # Initialize progress tracking
         processed = 0
         errors = 0
         self.progress_bar.setMaximum(total_files)
@@ -664,6 +576,7 @@ class FileProcessorWindow(QMainWindow):
         # Determine removal mode
         remove_with_content = self.removal_mode_combo.currentIndex() == 1  # 1 = "Remove tags with content"
         
+        # Process each file
         for input_path, rel_path in files:
             # Create output path preserving directory structure
             output_path = os.path.join(output_dir, rel_path)
@@ -681,48 +594,9 @@ class FileProcessorWindow(QMainWindow):
             self.status_label.setText(f"Processing: {processed}/{total_files}")
             QApplication.processEvents()
 
+        # Show completion message
         success_count = processed - errors
         self.show_info(f"Processed {success_count} files successfully" + 
                       (f", {errors} errors" if errors > 0 else ""))
         self.status_label.setText("Ready")
-        self.progress_bar.setValue(0)
-
-    def toggle_tag_selection(self, checked):
-        """Enable or disable tag selection based on selected mode."""
-        if checked:
-            # Enable tag selection only for 'selected' and 'all_except' modes
-            self.tag_selection_group.setEnabled(
-                self.attr_mode_selected.isChecked() or self.attr_mode_all_except.isChecked()
-            )
-            
-            # Update label based on selected mode
-            if self.attr_mode_selected.isChecked():
-                self.tag_selection_group.setTitle("Tags TO Clean (select tags)")
-            elif self.attr_mode_all_except.isChecked():
-                self.tag_selection_group.setTitle("Tags to EXCLUDE from Cleaning (select tags to keep)")
-        
-    def get_selected_tags(self):
-        """Get list of selected tags from checkboxes and list."""
-        selected_tags = []
-        
-        # Get tags from checkboxes
-        for tag, checkbox in self.tag_selection_checkboxes.items():
-            if checkbox.isChecked():
-                selected_tags.append(tag)
-        
-        # Get custom tags from list
-        for i in range(self.clean_tags_list.count()):
-            tag = self.clean_tags_list.item(i).text()
-            if tag and tag not in selected_tags:
-                selected_tags.append(tag)
-                
-        return selected_tags
-
-def main():
-    app = QApplication(sys.argv)
-    window = FileProcessorWindow()
-    window.show()
-    sys.exit(app.exec_())
-
-if __name__ == "__main__":
-    main()
+        self.progress_bar.setValue(0) 
