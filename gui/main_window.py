@@ -4,11 +4,12 @@ Defines the UI components and application logic
 """
 
 import os
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                            QPushButton, QLabel, QProgressBar, QCheckBox, 
-                            QFileDialog, QMessageBox, QComboBox, QListWidget, 
-                            QGroupBox, QTabWidget, QRadioButton, QGridLayout)
-from PyQt5.QtCore import Qt, QApplication
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                            QHBoxLayout, QPushButton, QLabel, QProgressBar, 
+                            QCheckBox, QFileDialog, QMessageBox, QComboBox, 
+                            QListWidget, QGroupBox, QTabWidget, QRadioButton, 
+                            QGridLayout, QLineEdit, QListWidgetItem)
+from PyQt5.QtCore import Qt
 
 from gui.drag_drop import DragDropLineEdit
 from processors.html_processor import process_html_file
@@ -233,65 +234,81 @@ class FileProcessorWindow(QMainWindow):
         main_layout.addWidget(input_group)
 
     def _create_tag_removal_tab(self):
-        """Create the tab for tag removal options."""
+        """Create tab for tag removal options."""
         remove_tab = QWidget()
         remove_layout = QVBoxLayout(remove_tab)
         
-        # Add removal mode selection
-        mode_layout = QHBoxLayout()
-        mode_layout.addWidget(QLabel("Removal mode:"))
-        self.removal_mode_combo = QComboBox()
-        self.removal_mode_combo.addItems([
-            "Remove tags only (preserve content)", 
-            "Remove tags with content"
-        ])
-        mode_layout.addWidget(self.removal_mode_combo)
-        remove_layout.addLayout(mode_layout)
+        # Remove general mode selection (będziemy mieć per-tag)
+        # Instead add explanation text
+        remove_layout.addWidget(QLabel("Select which tags to remove and how:"))
         
         # Common HTML tags to remove
-        common_tags_layout = QHBoxLayout()
-        common_tags_layout.addWidget(QLabel("Common tags:"))
+        common_tags_layout = QGridLayout()
         
         self.removal_tag_checkboxes = {}
+        self.removal_mode_checkboxes = {}  # Nowy słownik dla trybu usuwania
         common_tags = ["script", "style", "iframe", "comment", "header", "footer", "nav", "aside"]
         
-        grid_layout = QGridLayout()
-        row, col = 0, 0
-        max_cols = 3
+        # Create column headers
+        common_tags_layout.addWidget(QLabel("Tag"), 0, 0)
+        common_tags_layout.addWidget(QLabel("Remove"), 0, 1)
+        common_tags_layout.addWidget(QLabel("With content"), 0, 2)
         
-        for tag in common_tags:
-            checkbox = QCheckBox(tag)
+        for i, tag in enumerate(common_tags):
+            row = i + 1  # Start from row 1 (after headers)
+            
+            # Tag name label
+            tag_label = QLabel(tag)
+            common_tags_layout.addWidget(tag_label, row, 0)
+            
+            # Checkbox to select tag for removal
+            checkbox = QCheckBox()
             self.removal_tag_checkboxes[tag] = checkbox
-            grid_layout.addWidget(checkbox, row, col)
-            col += 1
-            if col >= max_cols:
-                col = 0
-                row += 1
+            common_tags_layout.addWidget(checkbox, row, 1)
+            
+            # Checkbox to select removal mode (with content)
+            mode_checkbox = QCheckBox()
+            mode_checkbox.setEnabled(False)  # Initially disabled
+            self.removal_mode_checkboxes[tag] = mode_checkbox
+            common_tags_layout.addWidget(mode_checkbox, row, 2)
+            
+            # Connect checkbox to enable/disable mode selection
+            checkbox.stateChanged.connect(lambda state, tag=tag: self.toggle_removal_mode(tag, state))
         
-        remove_layout.addLayout(grid_layout)
+        remove_layout.addLayout(common_tags_layout)
         
-        # Custom tags to remove
-        custom_tag_layout = QHBoxLayout()
-        custom_tag_layout.addWidget(QLabel("Custom tag:"))
+        # Custom tags section stays mostly the same, but add mode selection
+        custom_tag_section = QGroupBox("Custom Tags")
+        custom_tag_layout = QVBoxLayout(custom_tag_section)
+        
+        input_row = QHBoxLayout()
+        input_row.addWidget(QLabel("Custom tag:"))
         self.removal_custom_input = QLineEdit()
-        self.removal_custom_input.setPlaceholderText("Enter tag name(s) (e.g. 'div', 'span,p,a')...")
+        self.removal_custom_input.setPlaceholderText("Enter tag name (e.g. 'div')")
         self.removal_custom_input.returnPressed.connect(self.add_removal_tag)
+        input_row.addWidget(self.removal_custom_input)
+        
+        # Mode selection for custom tag
+        self.custom_tag_with_content = QCheckBox("Remove with content")
+        input_row.addWidget(self.custom_tag_with_content)
+        
         add_tag_button = QPushButton("Add")
         add_tag_button.clicked.connect(self.add_removal_tag)
+        input_row.addWidget(add_tag_button)
         
-        custom_tag_layout.addWidget(self.removal_custom_input)
-        custom_tag_layout.addWidget(add_tag_button)
-        remove_layout.addLayout(custom_tag_layout)
+        custom_tag_layout.addLayout(input_row)
         
-        # List of custom removal tags
+        # List of custom removal tags (now with two columns: tag name and removal mode)
         self.removal_tags_list = QListWidget()
         remove_tag_button = QPushButton("Remove Selected")
         remove_tag_button.clicked.connect(self.remove_removal_tag)
         remove_tag_button.setStyleSheet("background-color: #e74c3c; color: white;")
         
-        remove_layout.addWidget(QLabel("Custom tags to remove:"))
-        remove_layout.addWidget(self.removal_tags_list)
-        remove_layout.addWidget(remove_tag_button)
+        custom_tag_layout.addWidget(QLabel("Custom tags to remove:"))
+        custom_tag_layout.addWidget(self.removal_tags_list)
+        custom_tag_layout.addWidget(remove_tag_button)
+        
+        remove_layout.addWidget(custom_tag_section)
         
         self.tabWidget.addTab(remove_tab, "Tags to Remove")
 
@@ -403,13 +420,37 @@ class FileProcessorWindow(QMainWindow):
         QMessageBox.information(self, "Information", message)
 
     def add_removal_tag(self):
-        """Add custom tags to the removal list."""
-        self._add_tags_to_list(self.removal_custom_input, self.removal_tags_list)
+        """Add custom tag to the removal list."""
+        tag_input = self.removal_custom_input.text().strip()
+        if not tag_input:
+            self.show_error("Please enter at least one tag name.")
+            return
+        
+        # Add with indicator of removal mode
+        with_content = self.custom_tag_with_content.isChecked()
+        display_text = f"{tag_input} {'(with content)' if with_content else ''}"
+        
+        # Store actual data as tag_name|mode where mode is 1 for with_content, 0 for without
+        item_data = f"{tag_input}|{1 if with_content else 0}"
+        
+        # Get existing tags to avoid duplicates
+        existing_items = [self.removal_tags_list.item(i).text().split()[0] for i in range(self.removal_tags_list.count())]
+        
+        if tag_input not in existing_items:
+            item = QListWidgetItem(display_text)
+            item.setData(Qt.UserRole, item_data)  # Store the actual data
+            self.removal_tags_list.addItem(item)
+            self.removal_custom_input.clear()
+            self.custom_tag_with_content.setChecked(False)
+        else:
+            self.show_info(f"Tag '{tag_input}' is already in the list.")
         
     def remove_removal_tag(self):
         """Remove selected tag from the removal list."""
-        self._remove_selected_items(self.removal_tags_list)
-        
+        selected_items = self.removal_tags_list.selectedItems()
+        for item in selected_items:
+            self.removal_tags_list.takeItem(self.removal_tags_list.row(item))
+
     def add_clean_tag(self):
         """Add custom tags to the attribute cleaning list."""
         self._add_tags_to_list(self.clean_custom_input, self.clean_tags_list)
@@ -490,6 +531,12 @@ class FileProcessorWindow(QMainWindow):
                 
         return selected_tags
 
+    def toggle_removal_mode(self, tag, state):
+        """Enable or disable removal mode checkbox based on tag checkbox state."""
+        self.removal_mode_checkboxes[tag].setEnabled(state == Qt.Checked)
+        if state != Qt.Checked:
+            self.removal_mode_checkboxes[tag].setChecked(False)
+
     def start_processing(self):
         """Start processing the selected files."""
         # Validate input
@@ -511,17 +558,29 @@ class FileProcessorWindow(QMainWindow):
             self.show_error("Please select at least one file type to process")
             return
         
-        # Get tags to remove and clean
+        # Get tags to remove (split into two lists)
         tags_to_remove = []
+        tags_to_remove_with_content = []
         
         # Add checked common tags for removal
         for tag, checkbox in self.removal_tag_checkboxes.items():
             if checkbox.isChecked():
-                tags_to_remove.append(tag)
+                if self.removal_mode_checkboxes[tag].isChecked():
+                    tags_to_remove_with_content.append(tag)
+                else:
+                    tags_to_remove.append(tag)
                 
         # Add custom tags for removal
         for i in range(self.removal_tags_list.count()):
-            tags_to_remove.append(self.removal_tags_list.item(i).text())
+            item = self.removal_tags_list.item(i)
+            item_data = item.data(Qt.UserRole).split('|')
+            tag = item_data[0]
+            with_content = item_data[1] == '1'
+            
+            if with_content:
+                tags_to_remove_with_content.append(tag)
+            else:
+                tags_to_remove.append(tag)
             
         # Determine attribute cleaning mode and exceptions
         attr_clean_mode = 'all'  # Default
@@ -537,8 +596,7 @@ class FileProcessorWindow(QMainWindow):
         # Validate selections based on current tab
         current_tab_index = self.tabWidget.currentIndex()
         
-        if current_tab_index == 0 and not tags_to_remove:
-            # On tag removal tab and no tags selected
+        if current_tab_index == 0 and not tags_to_remove and not tags_to_remove_with_content:
             self.show_error("Please select at least one tag to remove")
             return
         elif current_tab_index == 1:
@@ -573,17 +631,15 @@ class FileProcessorWindow(QMainWindow):
         self.progress_bar.setMaximum(total_files)
         self.progress_bar.setValue(0)
 
-        # Determine removal mode
-        remove_with_content = self.removal_mode_combo.currentIndex() == 1  # 1 = "Remove tags with content"
-        
         # Process each file
         for input_path, rel_path in files:
             # Create output path preserving directory structure
             output_path = os.path.join(output_dir, rel_path)
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
-            result = process_html_file(input_path, output_path, tags_to_remove, 
-                                      remove_with_content, attr_clean_mode, attr_exceptions)
+            result = process_html_file(input_path, output_path, 
+                                      tags_to_remove, tags_to_remove_with_content,
+                                      attr_clean_mode, attr_exceptions)
             
             if result is not True:
                 self.show_error(f"Error processing {rel_path}: {result}")

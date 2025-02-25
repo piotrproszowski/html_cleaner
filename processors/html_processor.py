@@ -6,15 +6,15 @@ Handles the actual HTML modification using BeautifulSoup
 import os
 from bs4 import BeautifulSoup, Comment
 
-def process_html_file(input_path, output_path, tags_to_remove, remove_with_content, clean_attrs_mode, attrs_exceptions=None):
+def process_html_file(input_path, output_path, tags_to_remove, tags_to_remove_with_content, clean_attrs_mode, attrs_exceptions=None):
     """
     Process HTML file by modifying specified tags using BeautifulSoup.
     
     Args:
         input_path: Path to the input file
         output_path: Path where processed file will be saved
-        tags_to_remove: List of tags to remove
-        remove_with_content: If True, removes tags with their content, otherwise preserves content
+        tags_to_remove: List of tags to remove (preserving content)
+        tags_to_remove_with_content: List of tags to remove including their content
         clean_attrs_mode: Mode for cleaning attributes - 'all', 'selected', or 'all_except'
         attrs_exceptions: List of tags to exclude or include for attribute cleaning (depends on clean_attrs_mode)
     """
@@ -27,21 +27,24 @@ def process_html_file(input_path, output_path, tags_to_remove, remove_with_conte
         # Parse the HTML content
         soup = BeautifulSoup(content, 'html.parser')
         
-        # Remove comments if specified
-        if 'comment' in tags_to_remove:
+        # Remove comments if specified (special case)
+        if 'comment' in tags_to_remove or 'comment' in tags_to_remove_with_content:
             for comment in soup.find_all(text=lambda text: isinstance(text, Comment)):
                 comment.extract()
         
-        # Process tags to remove
+        # Process tags to remove while preserving content
         for tag in tags_to_remove:
             if tag and tag != 'comment':  # Skip empty tag names and 'comment'
                 for element in soup.find_all(tag):
-                    if remove_with_content:
-                        # Remove tag and its content
-                        element.decompose()
-                    else:
-                        # Remove tag but keep its content
-                        element.unwrap()
+                    # Remove tag but keep its content
+                    element.unwrap()
+        
+        # Process tags to remove with their content
+        for tag in tags_to_remove_with_content:
+            if tag and tag != 'comment':  # Skip empty tag names and 'comment'
+                for element in soup.find_all(tag):
+                    # Remove tag and its content
+                    element.decompose()
         
         # Process tags for attribute cleaning based on mode
         if clean_attrs_mode == 'all':
