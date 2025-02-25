@@ -15,8 +15,22 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
 from PyQt5.QtCore import Qt, QMimeData
 from PyQt5.QtGui import QDragEnterEvent, QDropEvent
 
-def process_html_file(input_path, output_path, tags_to_remove):
-    """Process HTML file by removing specified tags using BeautifulSoup, preserving the text content."""
+def process_html_file(input_path, output_path, tags_to_remove, tags_to_clean_attrs, attributes_to_keep=None):
+    """
+    Process HTML file by modifying specified tags using BeautifulSoup.
+    
+    Args:
+        input_path: Path to the input file
+        output_path: Path where processed file will be saved
+        tags_to_remove: List of tags to remove (with or without content)
+        tags_to_clean_attrs: List of tags to clean attributes from
+        attributes_to_keep: List of attribute names to keep during cleaning (if None, all attributes are removed)
+    
+    Examples:
+        For tags_to_remove=['b'] and tags_to_clean_attrs=['p'] and attributes_to_keep=['id']:
+            Input:  <p style="color:red" id="para1" class="text">This is <b>bold</b> text</p>
+            Output: <p id="para1">This is bold text</p>
+    """
     try:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
@@ -31,12 +45,31 @@ def process_html_file(input_path, output_path, tags_to_remove):
             for comment in soup.find_all(text=lambda text: isinstance(text, Comment)):
                 comment.extract()
         
-        # Process the content by removing specified tags but preserving their content
+        # Process tags to remove
+        mode = 'remove_tags'  # Default mode is to preserve content
         for tag in tags_to_remove:
-            if tag and tag != 'comment':  # Skip empty tag names and 'comment' which we handled separately
-                # Use unwrap() to remove the tag but keep its contents
+            if tag and tag != 'comment':  # Skip empty tag names and 'comment'
                 for element in soup.find_all(tag):
-                    element.unwrap()
+                    if mode == 'remove_tags':
+                        # Remove tag but keep its content
+                        element.unwrap()
+                    else:  # mode == 'remove_with_content'
+                        # Remove tag and its content
+                        element.decompose()
+        
+        # Process tags to clean attributes
+        for tag in tags_to_clean_attrs:
+            if tag:  # Skip empty tag names
+                for element in soup.find_all(tag):
+                    # Get attributes to remove (all except those in attributes_to_keep)
+                    attrs_to_remove = []
+                    for attr in element.attrs:
+                        if not attributes_to_keep or attr.lower() not in attributes_to_keep:
+                            attrs_to_remove.append(attr)
+                    
+                    # Remove unwanted attributes
+                    for attr in attrs_to_remove:
+                        del element[attr]
         
         # Convert back to string and write to output file
         with open(output_path, 'w', encoding='utf-8') as file:
@@ -299,15 +332,29 @@ class FileProcessorWindow(QMainWindow):
         self.recursive_checkbox.setChecked(True)
         input_layout.addWidget(self.recursive_checkbox)
 
-        # Tag removal options
-        tag_group = QGroupBox("HTML Tags to Remove")
-        tag_layout = QVBoxLayout(tag_group)
-
-        # Common HTML tags
+        # Create a layout with two tabs or sections
+        main_layout = QVBoxLayout(main_widget)
+        
+        # First section: Tags to remove
+        remove_group = QGroupBox("Tags to Remove")
+        remove_layout = QVBoxLayout(remove_group)
+        
+        # Add removal mode selection
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Removal mode:"))
+        self.removal_mode_combo = QComboBox()
+        self.removal_mode_combo.addItems([
+            "Remove tags only (preserve content)", 
+            "Remove tags with content"
+        ])
+        mode_layout.addWidget(self.removal_mode_combo)
+        remove_layout.addLayout(mode_layout)
+        
+        # Common HTML tags to remove
         common_tags_layout = QHBoxLayout()
         common_tags_layout.addWidget(QLabel("Common tags:"))
         
-        self.tag_checkboxes = {}
+        self.removal_tag_checkboxes = {}
         common_tags = ["script", "style", "iframe", "comment", "header", "footer", "nav", "aside"]
         
         grid_layout = QGridLayout()
@@ -316,38 +363,102 @@ class FileProcessorWindow(QMainWindow):
         
         for tag in common_tags:
             checkbox = QCheckBox(tag)
-            self.tag_checkboxes[tag] = checkbox
+            self.removal_tag_checkboxes[tag] = checkbox
             grid_layout.addWidget(checkbox, row, col)
             col += 1
             if col >= max_cols:
                 col = 0
                 row += 1
         
-        tag_layout.addLayout(grid_layout)
+        remove_layout.addLayout(grid_layout)
         
-        # Custom tag input
+        # Custom tags to remove
         custom_tag_layout = QHBoxLayout()
         custom_tag_layout.addWidget(QLabel("Custom tag:"))
-        self.custom_tag_input = QLineEdit()
-        self.custom_tag_input.setPlaceholderText("Enter tag name (e.g. 'div', 'span')...")
+        self.removal_custom_input = QLineEdit()
+        self.removal_custom_input.setPlaceholderText("Enter tag name(s) (e.g. 'div', 'span,p,a')...")
+        self.removal_custom_input.returnPressed.connect(self.add_removal_tag)
         add_tag_button = QPushButton("Add")
-        add_tag_button.clicked.connect(self.add_custom_tag)
+        add_tag_button.clicked.connect(self.add_removal_tag)
         
-        custom_tag_layout.addWidget(self.custom_tag_input)
+        custom_tag_layout.addWidget(self.removal_custom_input)
         custom_tag_layout.addWidget(add_tag_button)
-        tag_layout.addLayout(custom_tag_layout)
+        remove_layout.addLayout(custom_tag_layout)
         
-        # List of custom tags
-        self.custom_tags_list = QListWidget()
+        # List of custom removal tags
+        self.removal_tags_list = QListWidget()
         remove_tag_button = QPushButton("Remove Selected")
-        remove_tag_button.clicked.connect(self.remove_custom_tag)
+        remove_tag_button.clicked.connect(self.remove_removal_tag)
         remove_tag_button.setStyleSheet("background-color: #e74c3c; color: white;")
         
-        tag_layout.addWidget(QLabel("Custom tags to remove:"))
-        tag_layout.addWidget(self.custom_tags_list)
-        tag_layout.addWidget(remove_tag_button)
+        remove_layout.addWidget(QLabel("Custom tags to remove:"))
+        remove_layout.addWidget(self.removal_tags_list)
+        remove_layout.addWidget(remove_tag_button)
         
-        layout.addWidget(tag_group)
+        main_layout.addWidget(remove_group)
+        
+        # Second section: Tags to Clean Attributes
+        clean_group = QGroupBox("Tags to Clean Attributes")
+        clean_layout = QVBoxLayout(clean_group)
+        
+        # Add option to keep certain attributes
+        keep_attrs_layout = QHBoxLayout()
+        keep_attrs_layout.addWidget(QLabel("Keep attributes:"))
+        self.keep_attrs_input = QLineEdit()
+        self.keep_attrs_input.setPlaceholderText("Enter attributes to keep (e.g. 'id,class,href')...")
+        keep_attrs_layout.addWidget(self.keep_attrs_input)
+        clean_layout.addLayout(keep_attrs_layout)
+        
+        # Adding a description label
+        attrs_description = QLabel("Separate attribute names with commas. Leave empty to remove all attributes.")
+        attrs_description.setStyleSheet("font-size: 10px; color: #777;")
+        clean_layout.addWidget(attrs_description)
+        
+        # Common HTML tags for attribute cleaning
+        common_clean_tags_layout = QHBoxLayout()
+        common_clean_tags_layout.addWidget(QLabel("Common tags:"))
+        
+        self.clean_tag_checkboxes = {}
+        common_clean_tags = ["p", "div", "span", "a", "table", "tr", "td", "ul", "ol", "li"]
+        
+        clean_grid_layout = QGridLayout()
+        row, col = 0, 0
+        
+        for tag in common_clean_tags:
+            checkbox = QCheckBox(tag)
+            self.clean_tag_checkboxes[tag] = checkbox
+            clean_grid_layout.addWidget(checkbox, row, col)
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+        
+        clean_layout.addLayout(clean_grid_layout)
+        
+        # Custom tags for attribute cleaning
+        custom_clean_layout = QHBoxLayout()
+        custom_clean_layout.addWidget(QLabel("Custom tag:"))
+        self.clean_custom_input = QLineEdit()
+        self.clean_custom_input.setPlaceholderText("Enter tag name(s) (e.g. 'h1', 'img,button')...")
+        self.clean_custom_input.returnPressed.connect(self.add_clean_tag)
+        add_clean_button = QPushButton("Add")
+        add_clean_button.clicked.connect(self.add_clean_tag)
+        
+        custom_clean_layout.addWidget(self.clean_custom_input)
+        custom_clean_layout.addWidget(add_clean_button)
+        clean_layout.addLayout(custom_clean_layout)
+        
+        # List of custom clean tags
+        self.clean_tags_list = QListWidget()
+        remove_clean_button = QPushButton("Remove Selected")
+        remove_clean_button.clicked.connect(self.remove_clean_tag)
+        remove_clean_button.setStyleSheet("background-color: #e74c3c; color: white;")
+        
+        clean_layout.addWidget(QLabel("Custom tags to clean attributes:"))
+        clean_layout.addWidget(self.clean_tags_list)
+        clean_layout.addWidget(remove_clean_button)
+        
+        main_layout.addWidget(clean_group)
 
         # Progress bar
         progress_group = QGroupBox("Progress")
@@ -383,25 +494,62 @@ class FileProcessorWindow(QMainWindow):
     def show_info(self, message):
         QMessageBox.information(self, "Information", message)
 
-    def add_custom_tag(self):
-        """Add a custom tag to the list."""
-        tag = self.custom_tag_input.text().strip()
-        if tag:
-            # Check if tag already exists in the list
-            items = [self.custom_tags_list.item(i).text() for i in range(self.custom_tags_list.count())]
-            if tag not in items:
-                self.custom_tags_list.addItem(tag)
-                self.custom_tag_input.clear()
+    def add_removal_tag(self):
+        """Add custom tags to the removal list."""
+        self._add_tags_to_list(self.removal_custom_input, self.removal_tags_list)
+        
+    def remove_removal_tag(self):
+        """Remove selected tag from the removal list."""
+        self._remove_selected_items(self.removal_tags_list)
+        
+    def add_clean_tag(self):
+        """Add custom tags to the attribute cleaning list."""
+        self._add_tags_to_list(self.clean_custom_input, self.clean_tags_list)
+        
+    def remove_clean_tag(self):
+        """Remove selected tag from the attribute cleaning list."""
+        self._remove_selected_items(self.clean_tags_list)
+        
+    def _add_tags_to_list(self, input_field, list_widget):
+        """Helper method to add tags from input field to list widget."""
+        tag_input = input_field.text().strip()
+        if not tag_input:
+            self.show_error("Please enter at least one tag name.")
+            return
+            
+        # Split by comma and process each tag
+        tag_list = [tag.strip() for tag in tag_input.split(',')]
+        
+        # Get existing tags to avoid duplicates
+        existing_items = [list_widget.item(i).text() for i in range(list_widget.count())]
+        
+        added_count = 0
+        duplicate_count = 0
+        
+        for tag in tag_list:
+            if not tag:  # Skip empty tags
+                continue
+                
+            if tag not in existing_items:
+                list_widget.addItem(tag)
+                added_count += 1
             else:
-                self.show_info(f"Tag '{tag}' already in the list.")
-        else:
-            self.show_error("Please enter a tag name.")
-
-    def remove_custom_tag(self):
-        """Remove selected custom tag from the list."""
-        selected_items = self.custom_tags_list.selectedItems()
+                duplicate_count += 1
+                
+        # Clear the input field
+        input_field.clear()
+        
+        # Show summary message if needed
+        if duplicate_count > 0:
+            self.show_info(f"Added {added_count} tag(s). {duplicate_count} tag(s) were already in the list.")
+        elif added_count > 0 and len(tag_list) > 1:
+            self.status_label.setText(f"Added {added_count} tags")
+            
+    def _remove_selected_items(self, list_widget):
+        """Helper method to remove selected items from a list widget."""
+        selected_items = list_widget.selectedItems()
         for item in selected_items:
-            self.custom_tags_list.takeItem(self.custom_tags_list.row(item))
+            list_widget.takeItem(list_widget.row(item))
 
     def get_all_files(self, paths, recursive=False):
         """Get all supported files from the given paths."""
@@ -452,24 +600,41 @@ class FileProcessorWindow(QMainWindow):
         # Get tags to remove
         tags_to_remove = []
         
-        # Add checked common tags
-        for tag, checkbox in self.tag_checkboxes.items():
+        # Add checked common tags for removal
+        for tag, checkbox in self.removal_tag_checkboxes.items():
             if checkbox.isChecked():
                 tags_to_remove.append(tag)
                 
-        # Add custom tags
-        for i in range(self.custom_tags_list.count()):
-            tags_to_remove.append(self.custom_tags_list.item(i).text())
+        # Add custom tags for removal
+        for i in range(self.removal_tags_list.count()):
+            tags_to_remove.append(self.removal_tags_list.item(i).text())
             
-        if not tags_to_remove:
-            self.show_error("Please select at least one tag to remove")
+        # Get attributes to keep
+        attributes_to_keep = []
+        attrs_input = self.keep_attrs_input.text().strip()
+        if attrs_input:
+            attributes_to_keep = [attr.strip().lower() for attr in attrs_input.split(',') if attr.strip()]
+        
+        # Get tags to clean attributes
+        tags_to_clean = []
+        
+        # Add checked common tags for attribute cleaning
+        for tag, checkbox in self.clean_tag_checkboxes.items():
+            if checkbox.isChecked():
+                tags_to_clean.append(tag)
+                
+        # Add custom tags for attribute cleaning
+        for i in range(self.clean_tags_list.count()):
+            tags_to_clean.append(self.clean_tags_list.item(i).text())
+            
+        # Validate tag selections
+        if not tags_to_remove and not tags_to_clean:
+            self.show_error("Please select at least one tag to process")
             return
             
-        # Handle special case for comments
-        if "comment" in tags_to_remove:
-            tags_to_remove.remove("comment")
-            # We'll handle comments separately in the processing function
-            
+        # Determine removal mode
+        remove_with_content = self.removal_mode_combo.currentIndex() == 1
+        
         # Get all files to process
         files = self.get_all_files(paths, recursive)
         
@@ -493,7 +658,7 @@ class FileProcessorWindow(QMainWindow):
             output_path = os.path.join(output_dir, rel_path)
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
-            result = process_html_file(input_path, output_path, tags_to_remove)
+            result = process_html_file(input_path, output_path, tags_to_remove, tags_to_clean, attributes_to_keep)
             
             if result is not True:
                 self.show_error(f"Error processing {rel_path}: {result}")
