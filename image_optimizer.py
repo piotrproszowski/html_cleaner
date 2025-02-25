@@ -16,7 +16,7 @@ from PyQt5.QtCore import Qt, QMimeData
 from PyQt5.QtGui import QDragEnterEvent, QDropEvent
 
 def process_html_file(input_path, output_path, tags_to_remove):
-    """Process HTML file by removing specified tags using BeautifulSoup."""
+    """Process HTML file by removing specified tags using BeautifulSoup, preserving the text content."""
     try:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
@@ -31,11 +31,12 @@ def process_html_file(input_path, output_path, tags_to_remove):
             for comment in soup.find_all(text=lambda text: isinstance(text, Comment)):
                 comment.extract()
         
-        # Process the content by removing specified tags
+        # Process the content by removing specified tags but preserving their content
         for tag in tags_to_remove:
             if tag and tag != 'comment':  # Skip empty tag names and 'comment' which we handled separately
+                # Use unwrap() to remove the tag but keep its contents
                 for element in soup.find_all(tag):
-                    element.decompose()
+                    element.unwrap()
         
         # Convert back to string and write to output file
         with open(output_path, 'w', encoding='utf-8') as file:
