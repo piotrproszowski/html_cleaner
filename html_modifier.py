@@ -11,25 +11,21 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QPushButton, QLabel, QLineEdit, 
                             QProgressBar, QCheckBox, QFileDialog, QMessageBox,
                             QComboBox, QListWidget, QListWidgetItem, QGridLayout,
-                            QGroupBox)
+                            QGroupBox, QScrollArea, QTabWidget, QRadioButton)
 from PyQt5.QtCore import Qt, QMimeData
 from PyQt5.QtGui import QDragEnterEvent, QDropEvent
 
-def process_html_file(input_path, output_path, tags_to_remove, tags_to_clean_attrs, attributes_to_keep=None):
+def process_html_file(input_path, output_path, tags_to_remove, remove_with_content, clean_attrs_mode, attrs_exceptions=None):
     """
     Process HTML file by modifying specified tags using BeautifulSoup.
     
     Args:
         input_path: Path to the input file
         output_path: Path where processed file will be saved
-        tags_to_remove: List of tags to remove (with or without content)
-        tags_to_clean_attrs: List of tags to clean attributes from
-        attributes_to_keep: List of attribute names to keep during cleaning (if None, all attributes are removed)
-    
-    Examples:
-        For tags_to_remove=['b'] and tags_to_clean_attrs=['p'] and attributes_to_keep=['id']:
-            Input:  <p style="color:red" id="para1" class="text">This is <b>bold</b> text</p>
-            Output: <p id="para1">This is bold text</p>
+        tags_to_remove: List of tags to remove
+        remove_with_content: If True, removes tags with their content, otherwise preserves content
+        clean_attrs_mode: Mode for cleaning attributes - 'all', 'selected', or 'all_except'
+        attrs_exceptions: List of tags to exclude or include for attribute cleaning (depends on clean_attrs_mode)
     """
     try:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -46,30 +42,37 @@ def process_html_file(input_path, output_path, tags_to_remove, tags_to_clean_att
                 comment.extract()
         
         # Process tags to remove
-        mode = 'remove_tags'  # Default mode is to preserve content
         for tag in tags_to_remove:
             if tag and tag != 'comment':  # Skip empty tag names and 'comment'
                 for element in soup.find_all(tag):
-                    if mode == 'remove_tags':
-                        # Remove tag but keep its content
-                        element.unwrap()
-                    else:  # mode == 'remove_with_content'
+                    if remove_with_content:
                         # Remove tag and its content
                         element.decompose()
+                    else:
+                        # Remove tag but keep its content
+                        element.unwrap()
         
-        # Process tags to clean attributes
-        for tag in tags_to_clean_attrs:
-            if tag:  # Skip empty tag names
-                for element in soup.find_all(tag):
-                    # Get attributes to remove (all except those in attributes_to_keep)
-                    attrs_to_remove = []
-                    for attr in element.attrs:
-                        if not attributes_to_keep or attr.lower() not in attributes_to_keep:
-                            attrs_to_remove.append(attr)
+        # Process tags for attribute cleaning based on mode
+        if clean_attrs_mode == 'all':
+            # Clean all tags
+            for element in soup.find_all(True):  # Find all elements
+                # Remove all attributes
+                element.attrs = {}
                     
-                    # Remove unwanted attributes
-                    for attr in attrs_to_remove:
-                        del element[attr]
+        elif clean_attrs_mode == 'selected':
+            # Clean only selected tags
+            for tag in attrs_exceptions or []:
+                if tag:  # Skip empty tag names
+                    for element in soup.find_all(tag):
+                        # Remove all attributes
+                        element.attrs = {}
+                            
+        elif clean_attrs_mode == 'all_except':
+            # Clean all tags except those in tags_to_exclude
+            for element in soup.find_all(True):
+                if element.name not in (attrs_exceptions or []):
+                    # Remove all attributes
+                    element.attrs = {}
         
         # Convert back to string and write to output file
         with open(output_path, 'w', encoding='utf-8') as file:
@@ -117,7 +120,7 @@ class FileProcessorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("HTML & Text File Processor")
-        self.setGeometry(100, 100, 800, 600)
+        self.setGeometry(100, 100, 800, 700)  # Optymalna wysokość dla zakładek
         
         # Add author info label
         self.author_label = QLabel("© 2024 Piotr Proszowski")
@@ -295,11 +298,11 @@ class FileProcessorWindow(QMainWindow):
                 }
             """)
 
-        # Create main widget and layout
+        # Utwórz główny widget
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
-        layout = QVBoxLayout(main_widget)
-
+        main_layout = QVBoxLayout(main_widget)
+        
         # File/Folder selection with drag and drop support
         input_group = QGroupBox("Input Files and Folders")
         input_layout = QVBoxLayout(input_group)
@@ -325,19 +328,22 @@ class FileProcessorWindow(QMainWindow):
         file_type_layout.addWidget(self.txt_checkbox)
         
         input_layout.addLayout(file_type_layout)
-        layout.addWidget(input_group)
+        main_layout.addWidget(input_group)
 
         # Add recursive option
         self.recursive_checkbox = QCheckBox("Process subfolders recursively")
         self.recursive_checkbox.setChecked(True)
         input_layout.addWidget(self.recursive_checkbox)
 
-        # Create a layout with two tabs or sections
-        main_layout = QVBoxLayout(main_widget)
+        main_layout.addWidget(input_group)
         
-        # First section: Tags to remove
-        remove_group = QGroupBox("Tags to Remove")
-        remove_layout = QVBoxLayout(remove_group)
+        # Utwórz widget z zakładkami
+        self.tabWidget = QTabWidget()
+        main_layout.addWidget(self.tabWidget)
+        
+        # === PIERWSZA ZAKŁADKA: Tags to Remove ===
+        remove_tab = QWidget()
+        remove_layout = QVBoxLayout(remove_tab)
         
         # Add removal mode selection
         mode_layout = QHBoxLayout()
@@ -395,71 +401,84 @@ class FileProcessorWindow(QMainWindow):
         remove_layout.addWidget(self.removal_tags_list)
         remove_layout.addWidget(remove_tag_button)
         
-        main_layout.addWidget(remove_group)
+        self.tabWidget.addTab(remove_tab, "Tags to Remove")
         
-        # Second section: Tags to Clean Attributes
-        clean_group = QGroupBox("Tags to Clean Attributes")
-        clean_layout = QVBoxLayout(clean_group)
+        # === DRUGA ZAKŁADKA: Tags to Clean Attributes ===
+        clean_tab = QWidget()
+        clean_layout = QVBoxLayout(clean_tab)
         
-        # Add option to keep certain attributes
-        keep_attrs_layout = QHBoxLayout()
-        keep_attrs_layout.addWidget(QLabel("Keep attributes:"))
-        self.keep_attrs_input = QLineEdit()
-        self.keep_attrs_input.setPlaceholderText("Enter attributes to keep (e.g. 'id,class,href')...")
-        keep_attrs_layout.addWidget(self.keep_attrs_input)
-        clean_layout.addLayout(keep_attrs_layout)
+        # Mode selection for attribute cleaning
+        mode_group = QGroupBox("Attribute Cleaning Mode")
+        mode_layout = QVBoxLayout(mode_group)
         
-        # Adding a description label
-        attrs_description = QLabel("Separate attribute names with commas. Leave empty to remove all attributes.")
-        attrs_description.setStyleSheet("font-size: 10px; color: #777;")
-        clean_layout.addWidget(attrs_description)
+        self.attr_mode_all = QRadioButton("Clean attributes from ALL tags")
+        self.attr_mode_selected = QRadioButton("Clean attributes from SELECTED tags only")
+        self.attr_mode_all_except = QRadioButton("Clean attributes from ALL tags EXCEPT selected")
         
-        # Common HTML tags for attribute cleaning
-        common_clean_tags_layout = QHBoxLayout()
-        common_clean_tags_layout.addWidget(QLabel("Common tags:"))
+        self.attr_mode_all.setChecked(True)  # Default option
         
-        self.clean_tag_checkboxes = {}
-        common_clean_tags = ["p", "div", "span", "a", "table", "tr", "td", "ul", "ol", "li"]
+        # Add modes to the layout
+        mode_layout.addWidget(self.attr_mode_all)
+        mode_layout.addWidget(self.attr_mode_selected)
+        mode_layout.addWidget(self.attr_mode_all_except)
         
-        clean_grid_layout = QGridLayout()
+        # Connect signals
+        self.attr_mode_all.toggled.connect(self.toggle_tag_selection)
+        self.attr_mode_selected.toggled.connect(self.toggle_tag_selection)
+        self.attr_mode_all_except.toggled.connect(self.toggle_tag_selection)
+        
+        clean_layout.addWidget(mode_group)
+        
+        # Tag selection container
+        self.tag_selection_group = QGroupBox("Tag Selection")
+        self.tag_selection_group.setEnabled(False)
+        tag_selection_layout = QVBoxLayout(self.tag_selection_group)
+        
+        # Common tags for selection
+        common_tags_layout = QGridLayout()
+        common_tags = ["p", "div", "span", "a", "table", "tr", "td", "img", "h1", "h2", "h3", "ul", "ol", "li"]
+        self.tag_selection_checkboxes = {}
+        
         row, col = 0, 0
-        
-        for tag in common_clean_tags:
+        max_cols = 5
+        for tag in common_tags:
             checkbox = QCheckBox(tag)
-            self.clean_tag_checkboxes[tag] = checkbox
-            clean_grid_layout.addWidget(checkbox, row, col)
+            self.tag_selection_checkboxes[tag] = checkbox
+            common_tags_layout.addWidget(checkbox, row, col)
             col += 1
             if col >= max_cols:
                 col = 0
                 row += 1
         
-        clean_layout.addLayout(clean_grid_layout)
+        tag_selection_layout.addLayout(common_tags_layout)
         
-        # Custom tags for attribute cleaning
-        custom_clean_layout = QHBoxLayout()
-        custom_clean_layout.addWidget(QLabel("Custom tag:"))
+        # Custom tags input - similar to first tab
+        custom_tag_layout = QHBoxLayout()
+        custom_tag_layout.addWidget(QLabel("Custom tag:"))
         self.clean_custom_input = QLineEdit()
-        self.clean_custom_input.setPlaceholderText("Enter tag name(s) (e.g. 'h1', 'img,button')...")
+        self.clean_custom_input.setPlaceholderText("Enter tag name(s) (e.g. 'div', 'span,p,a')...")
         self.clean_custom_input.returnPressed.connect(self.add_clean_tag)
         add_clean_button = QPushButton("Add")
         add_clean_button.clicked.connect(self.add_clean_tag)
         
-        custom_clean_layout.addWidget(self.clean_custom_input)
-        custom_clean_layout.addWidget(add_clean_button)
-        clean_layout.addLayout(custom_clean_layout)
+        custom_tag_layout.addWidget(self.clean_custom_input)
+        custom_tag_layout.addWidget(add_clean_button)
+        tag_selection_layout.addLayout(custom_tag_layout)
         
-        # List of custom clean tags
+        # List of custom tags
         self.clean_tags_list = QListWidget()
         remove_clean_button = QPushButton("Remove Selected")
         remove_clean_button.clicked.connect(self.remove_clean_tag)
         remove_clean_button.setStyleSheet("background-color: #e74c3c; color: white;")
         
-        clean_layout.addWidget(QLabel("Custom tags to clean attributes:"))
-        clean_layout.addWidget(self.clean_tags_list)
-        clean_layout.addWidget(remove_clean_button)
+        tag_selection_layout.addWidget(QLabel("Custom tags:"))
+        tag_selection_layout.addWidget(self.clean_tags_list)
+        tag_selection_layout.addWidget(remove_clean_button)
         
-        main_layout.addWidget(clean_group)
-
+        clean_layout.addWidget(self.tag_selection_group)
+        
+        self.tabWidget.addTab(clean_tab, "Tags to Clean Attributes")
+        
         # Progress bar
         progress_group = QGroupBox("Progress")
         progress_layout = QVBoxLayout(progress_group)
@@ -469,15 +488,17 @@ class FileProcessorWindow(QMainWindow):
         self.status_label = QLabel("Ready")
         progress_layout.addWidget(self.status_label)
         
-        layout.addWidget(progress_group)
-
+        main_layout.addWidget(progress_group)
+        
         # Start button
         start_button = QPushButton("Start Processing")
         start_button.clicked.connect(self.start_processing)
-        layout.addWidget(start_button)
-
+        main_layout.addWidget(start_button)
+        
         # Add author label at the bottom
-        layout.addWidget(self.author_label)
+        main_layout.addWidget(self.author_label)
+
+        self.adjustSize()  # Dostosuj rozmiar okna do zawartości
 
     def browse_paths(self):
         """Browse for files or folders."""
@@ -597,7 +618,7 @@ class FileProcessorWindow(QMainWindow):
 
         recursive = self.recursive_checkbox.isChecked()
         
-        # Get tags to remove
+        # Get tags to remove and clean
         tags_to_remove = []
         
         # Add checked common tags for removal
@@ -609,31 +630,18 @@ class FileProcessorWindow(QMainWindow):
         for i in range(self.removal_tags_list.count()):
             tags_to_remove.append(self.removal_tags_list.item(i).text())
             
-        # Get attributes to keep
-        attributes_to_keep = []
-        attrs_input = self.keep_attrs_input.text().strip()
-        if attrs_input:
-            attributes_to_keep = [attr.strip().lower() for attr in attrs_input.split(',') if attr.strip()]
+        # Determine attribute cleaning mode and exceptions
+        attr_clean_mode = 'all'  # Default
+        attr_exceptions = []
         
-        # Get tags to clean attributes
-        tags_to_clean = []
+        if self.attr_mode_selected.isChecked():
+            attr_clean_mode = 'selected'
+            attr_exceptions = self.get_selected_tags()
+        elif self.attr_mode_all_except.isChecked():
+            attr_clean_mode = 'all_except'
+            attr_exceptions = self.get_selected_tags()
         
-        # Add checked common tags for attribute cleaning
-        for tag, checkbox in self.clean_tag_checkboxes.items():
-            if checkbox.isChecked():
-                tags_to_clean.append(tag)
-                
-        # Add custom tags for attribute cleaning
-        for i in range(self.clean_tags_list.count()):
-            tags_to_clean.append(self.clean_tags_list.item(i).text())
-            
-        # Validate tag selections
-        if not tags_to_remove and not tags_to_clean:
-            self.show_error("Please select at least one tag to process")
-            return
-            
-        # Determine removal mode
-        remove_with_content = self.removal_mode_combo.currentIndex() == 1
+        # Validate selections...
         
         # Get all files to process
         files = self.get_all_files(paths, recursive)
@@ -653,12 +661,16 @@ class FileProcessorWindow(QMainWindow):
         self.progress_bar.setMaximum(total_files)
         self.progress_bar.setValue(0)
 
+        # Determine removal mode
+        remove_with_content = self.removal_mode_combo.currentIndex() == 1  # 1 = "Remove tags with content"
+        
         for input_path, rel_path in files:
             # Create output path preserving directory structure
             output_path = os.path.join(output_dir, rel_path)
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
             
-            result = process_html_file(input_path, output_path, tags_to_remove, tags_to_clean, attributes_to_keep)
+            result = process_html_file(input_path, output_path, tags_to_remove, 
+                                      remove_with_content, attr_clean_mode, attr_exceptions)
             
             if result is not True:
                 self.show_error(f"Error processing {rel_path}: {result}")
@@ -674,6 +686,37 @@ class FileProcessorWindow(QMainWindow):
                       (f", {errors} errors" if errors > 0 else ""))
         self.status_label.setText("Ready")
         self.progress_bar.setValue(0)
+
+    def toggle_tag_selection(self, checked):
+        """Enable or disable tag selection based on selected mode."""
+        if checked:
+            # Enable tag selection only for 'selected' and 'all_except' modes
+            self.tag_selection_group.setEnabled(
+                self.attr_mode_selected.isChecked() or self.attr_mode_all_except.isChecked()
+            )
+            
+            # Update label based on selected mode
+            if self.attr_mode_selected.isChecked():
+                self.tag_selection_group.setTitle("Tags TO Clean (select tags)")
+            elif self.attr_mode_all_except.isChecked():
+                self.tag_selection_group.setTitle("Tags to EXCLUDE from Cleaning (select tags to keep)")
+        
+    def get_selected_tags(self):
+        """Get list of selected tags from checkboxes and list."""
+        selected_tags = []
+        
+        # Get tags from checkboxes
+        for tag, checkbox in self.tag_selection_checkboxes.items():
+            if checkbox.isChecked():
+                selected_tags.append(tag)
+        
+        # Get custom tags from list
+        for i in range(self.clean_tags_list.count()):
+            tag = self.clean_tags_list.item(i).text()
+            if tag and tag not in selected_tags:
+                selected_tags.append(tag)
+                
+        return selected_tags
 
 def main():
     app = QApplication(sys.argv)
