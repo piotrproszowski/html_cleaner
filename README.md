@@ -19,7 +19,3 @@ HTML & Text File Processor is an application that allows you to remove specific 
 - PyQt5
 - BeautifulSoup4
 - Pillow (PIL)
-
-## Installation
-
-### 1. Clone the repository
